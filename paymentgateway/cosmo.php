@@ -1,171 +1,148 @@
 <?php
-// system/paymentgateway/cosmo.php
+/**
+ * Cosmo Mobile Money Payment Gateway
+ * MTN MoMo API Professional Integration
+ * Version: 2.0.0
+ */
 
+// Prevent direct access
+if (!defined('ACCESS_CHECK')) {
+    die('Direct access not permitted');
+}
+
+/**
+ * Display gateway configuration
+ */
 function cosmo_show_config() {
     global $ui, $_L, $admin, $config;
 
-    // Assign configuration values from the $config array
-    $ui->assign('cosmo_api_url', $config['cosmo_api_url'] ?? '');
-    $ui->assign('cosmo_api_key', $config['cosmo_api_key'] ?? '');
-    $ui->assign('cosmo_currency', $config['cosmo_currency'] ?? '');
-    $ui->assign('cosmo_environment', $config['cosmo_environment'] ?? '');
+    // Assign configuration values
+    $ui->assign('cosmo_api_url', $config['cosmo_api_url'] ?? 'https://sandbox.momodeveloper.mtn.com');
+    $ui->assign('cosmo_subscription_key', $config['cosmo_subscription_key'] ?? '');
+    $ui->assign('cosmo_x_reference_id', $config['cosmo_x_reference_id'] ?? '');
+    $ui->assign('cosmo_api_secret', $config['cosmo_api_secret'] ?? '');
+    $ui->assign('cosmo_currency', $config['cosmo_currency'] ?? 'XAF');
+    $ui->assign('cosmo_environment', $config['cosmo_environment'] ?? 'sandbox');
+    $ui->assign('cosmo_webhook_url', $config['cosmo_webhook_url'] ?? '');
+    $ui->assign('cosmo_enable_logging', $config['cosmo_enable_logging'] ?? '0');
+    
     $ui->display('cosmo.tpl');
 }
 
+/**
+ * Save gateway configuration
+ */
 function cosmo_save_config() {
     global $admin, $_L;
 
+    // Get form data
     $cosmo_api_url = _post('cosmo_api_url');
-    $cosmo_api_key = _post('cosmo_api_key');
+    $cosmo_subscription_key = _post('cosmo_subscription_key');
+    $cosmo_x_reference_id = _post('cosmo_x_reference_id');
+    $cosmo_api_secret = _post('cosmo_api_secret');
     $cosmo_currency = _post('cosmo_currency');
     $cosmo_environment = _post('cosmo_environment');
+    $cosmo_webhook_url = _post('cosmo_webhook_url');
+    $cosmo_enable_logging = _post('cosmo_enable_logging') ? '1' : '0';
 
-    // Save cosmo_api_url using ORM
-    $d = ORM::for_table('tbl_appconfig')->where('setting', 'cosmo_api_url')->find_one();
-    if ($d) {
-        $d->value = $cosmo_api_url;
-        $d->save();
-    } else {
-        $d = ORM::for_table('tbl_appconfig')->create();
-        $d->setting = 'cosmo_api_url';
-        $d->value = $cosmo_api_url;
-        $d->save();
-    }
-
-    // Save cosmo_api_key
-    $d = ORM::for_table('tbl_appconfig')->where('setting', 'cosmo_api_key')->find_one();
-    if ($d) {
-        $d->value = $cosmo_api_key;
-        $d->save();
-    } else {
-        $d = ORM::for_table('tbl_appconfig')->create();
-        $d->setting = 'cosmo_api_key';
-        $d->value = $cosmo_api_key;
-        $d->save();
-    }
-
-    // Save cosmo_currency
-    $d = ORM::for_table('tbl_appconfig')->where('setting', 'cosmo_currency')->find_one();
-    if ($d) {
-        $d->value = $cosmo_currency;
-        $d->save();
-    } else {
-        $d = ORM::for_table('tbl_appconfig')->create();
-        $d->setting = 'cosmo_currency';
-        $d->value = $cosmo_currency;
-        $d->save();
-    }
-
-    // Save cosmo_environment
-    $d = ORM::for_table('tbl_appconfig')->where('setting', 'cosmo_environment')->find_one();
-    if ($d) {
-        $d->value = $cosmo_environment;
-        $d->save();
-    } else {
-        $d = ORM::for_table('tbl_appconfig')->create();
-        $d->setting = 'cosmo_environment';
-        $d->value = $cosmo_environment;
-        $d->save();
-    }
+    // Save each setting
+    cosmo_save_setting('cosmo_api_url', $cosmo_api_url);
+    cosmo_save_setting('cosmo_subscription_key', $cosmo_subscription_key);
+    cosmo_save_setting('cosmo_x_reference_id', $cosmo_x_reference_id);
+    cosmo_save_setting('cosmo_api_secret', $cosmo_api_secret);
+    cosmo_save_setting('cosmo_currency', $cosmo_currency);
+    cosmo_save_setting('cosmo_environment', $cosmo_environment);
+    cosmo_save_setting('cosmo_webhook_url', $cosmo_webhook_url);
+    cosmo_save_setting('cosmo_enable_logging', $cosmo_enable_logging);
 
     _log('[' . $admin['username'] . ']: Cosmo ' . $_L['Settings_Saved_Successfully'], 'Admin', $admin['id']);
     r2(U . 'paymentgateway/cosmo', 's', $_L['Settings_Saved_Successfully']);
 }
 
-function cosmo_create_transaction($trx, $user) {
-    global $config;
-
-    $api_key = $config['cosmo_api_key'];
-    $api_url = $config['cosmo_api_url'];
-    $environment = $config['cosmo_environment'];
-    $amount = $trx['price'];
-    $currency = $config['cosmo_currency'];
-    $phone = $user['phonenumber'];
-    $invoice_id = $trx['id'];
-
-    // 1. Get Access Token
-    $token = cosmo_get_token($api_url, $api_key);
-    if (!$token) {
-        Message::sendTelegram("Cosmo: Failed to get token");
-        r2(U . 'order/package', 'e', 'Payment gateway error. Please contact support.');
-        return false;
-    }
-
-    // 2. Generate reference UUID
-    $reference_id = cosmo_generate_uuid();
-
-    // 3. Prepare request payload
-    $payload = [
-        'amount' => $amount,
-        'currency' => $currency,
-        'externalId' => $invoice_id,
-        'payer' => [
-            'partyIdType' => 'MSISDN',
-            'partyId' => $phone
-        ],
-        'payerMessage' => "Payment for invoice #{$invoice_id}",
-        'payeeNote' => "Thank you for your purchase"
-    ];
-
-    // 4. Send request to pay
-    $headers = [
-        "Authorization: Bearer {$token}",
-        "X-Reference-Id: {$reference_id}",
-        "X-Target-Environment: {$environment}",
-        "Ocp-Apim-Subscription-Key: {$api_key}",
-        "Content-Type: application/json"
-    ];
-
-    $url = rtrim($api_url, '/') . "/collection/v1_0/requesttopay";
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, ($environment === 'production'));
-
-    $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($http_code == 202) {
-        // Redirect to the built-in order check page
-        $callback_url = U . "order/view/{$invoice_id}/check?ref={$reference_id}";
-        header("Location: {$callback_url}");
-        exit;
+/**
+ * Helper function to save settings
+ */
+function cosmo_save_setting($setting, $value) {
+    $d = ORM::for_table('tbl_appconfig')->where('setting', $setting)->find_one();
+    if ($d) {
+        $d->value = $value;
+        $d->save();
     } else {
-        Message::sendTelegram("Cosmo payment failed\n\n" . json_encode($response, JSON_PRETTY_PRINT));
-        r2(U . 'order/package', 'e', 'Payment could not be processed. Please try again.');
+        $d = ORM::for_table('tbl_appconfig')->create();
+        $d->setting = $setting;
+        $d->value = $value;
+        $d->save();
+    }
+}
+
+/**
+ * Get access token from MTN MoMo API
+ */
+function cosmo_get_access_token($params) {
+    $url = rtrim($params['api_base_url'], '/') . '/collection/token/';
+    $credentials = base64_encode($params['x_reference_id'] . ':' . $params['api_secret']);
+    
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => '{}',
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Basic ' . $credentials,
+            'Ocp-Apim-Subscription-Key: ' . $params['subscription_key'],
+            'Content-Type: application/json',
+            'Cache-Control: no-cache'
+        ],
+        CURLOPT_SSL_VERIFYPEER => ($params['environment'] === 'production'),
+        CURLOPT_TIMEOUT => 30
+    ]);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+    
+    // Log if enabled
+    if ($params['enable_logging']) {
+        cosmo_log_request('Get Access Token', $url, $httpCode, $response, $curlError);
+    }
+    
+    if ($httpCode === 200) {
+        $data = json_decode($response, true);
+        return $data['access_token'] ?? false;
+    }
+    
+    return false;
+}
+
+/**
+ * Format phone number to MTN MoMo format
+ */
+function cosmo_format_phone($phone) {
+    // Remove all non-numeric characters
+    $phone = preg_replace('/[^0-9]/', '', $phone);
+    
+    // Remove country code if present (assuming 237 for Cameroon)
+    if (substr($phone, 0, 3) === '237') {
+        $phone = substr($phone, 3);
+    }
+    
+    // Remove leading zero
+    $phone = ltrim($phone, '0');
+    
+    // Validate length (6-9 digits for most African countries)
+    if (strlen($phone) < 6 || strlen($phone) > 9) {
         return false;
     }
+    
+    // Add country code (237 for Cameroon - adjust as needed)
+    return '237' . $phone;
 }
 
-function cosmo_get_token($api_url, $api_key) {
-    $url = rtrim($api_url, '/') . "/collection/token/";
-    $auth = base64_encode("{$api_key}:{$api_key}");
-
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Authorization: Basic {$auth}",
-        "Ocp-Apim-Subscription-Key: {$api_key}",
-        "Content-Type: application/json"
-    ]);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([]));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-
-    $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($http_code == 200) {
-        $data = json_decode($response, true);
-        return $data['access_token'] ?? null;
-    }
-    return null;
-}
-
+/**
+ * Generate UUID v4
+ */
 function cosmo_generate_uuid() {
     return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
         random_int(0, 0xffff), random_int(0, 0xffff),
@@ -176,5 +153,250 @@ function cosmo_generate_uuid() {
     );
 }
 
-// ... any callback or webhook handling functions ...
+/**
+ * Log API requests
+ */
+function cosmo_log_request($action, $url, $httpCode, $response, $error = '', $payload = null) {
+    $log_dir = __DIR__ . '/../logs/';
+    if (!is_dir($log_dir)) {
+        mkdir($log_dir, 0755, true);
+    }
+    
+    $log_file = $log_dir . 'cosmo_' . date('Y-m-d') . '.log';
+    
+    $log_entry = [
+        'timestamp' => date('Y-m-d H:i:s'),
+        'action' => $action,
+        'url' => $url,
+        'http_code' => $httpCode,
+        'response' => json_decode($response, true) ?? $response,
+        'error' => $error
+    ];
+    
+    if ($payload && is_array($payload)) {
+        // Remove sensitive data from logs
+        if (isset($payload['payer']['partyId'])) {
+            $log_entry['payload'] = $payload;
+            $log_entry['payload']['payer']['partyId'] = '***HIDDEN***';
+        }
+    }
+    
+    file_put_contents($log_file, json_encode($log_entry, JSON_PRETTY_PRINT) . PHP_EOL . str_repeat('-', 80) . PHP_EOL, FILE_APPEND);
+}
+
+/**
+ * Main payment processing function
+ */
+function cosmo_create_transaction($trx, $user) {
+    global $config;
+
+    // Load gateway configuration
+    $params = [
+        'api_base_url' => $config['cosmo_api_url'] ?? 'https://sandbox.momodeveloper.mtn.com',
+        'subscription_key' => $config['cosmo_subscription_key'] ?? '',
+        'x_reference_id' => $config['cosmo_x_reference_id'] ?? '',
+        'api_secret' => $config['cosmo_api_secret'] ?? '',
+        'currency' => $config['cosmo_currency'] ?? 'XAF',
+        'environment' => $config['cosmo_environment'] ?? 'sandbox',
+        'enable_logging' => $config['cosmo_enable_logging'] ?? '0'
+    ];
+    
+    // Validate required configuration
+    if (empty($params['subscription_key']) || empty($params['x_reference_id']) || empty($params['api_secret'])) {
+        Message::sendTelegram("Cosmo: Missing gateway configuration");
+        r2(U . 'order/package', 'e', 'Payment gateway not properly configured. Please contact support.');
+        return false;
+    }
+    
+    // Format phone number
+    $phone = cosmo_format_phone($user['phonenumber'] ?? '');
+    if (!$phone) {
+        Message::sendTelegram("Cosmo: Invalid phone number - {$user['phonenumber']}");
+        r2(U . 'order/package', 'e', 'Invalid phone number format. Please use a valid mobile number.');
+        return false;
+    }
+    
+    // Get access token
+    $access_token = cosmo_get_access_token($params);
+    if (!$access_token) {
+        Message::sendTelegram("Cosmo: Failed to get access token");
+        r2(U . 'order/package', 'e', 'Payment gateway temporarily unavailable. Please try again later.');
+        return false;
+    }
+    
+    // Generate reference ID
+    $reference_id = cosmo_generate_uuid();
+    $amount = number_format($trx['price'], 2, '.', '');
+    $invoice_id = $trx['id'];
+    
+    // Prepare payment payload
+    $payload = [
+        'amount' => $amount,
+        'currency' => $params['currency'],
+        'externalId' => (string)$invoice_id,
+        'payer' => [
+            'partyIdType' => 'MSISDN',
+            'partyId' => $phone
+        ],
+        'payerMessage' => "Payment for Invoice #{$invoice_id}",
+        'payeeNote' => "Thank you for your purchase"
+    ];
+    
+    // Make payment request
+    $url = rtrim($params['api_base_url'], '/') . '/collection/v1_0/requesttopay';
+    $headers = [
+        "Authorization: Bearer {$access_token}",
+        "X-Reference-Id: {$reference_id}",
+        "X-Target-Environment: {$params['environment']}",
+        "Ocp-Apim-Subscription-Key: {$params['subscription_key']}",
+        "Content-Type: application/json"
+    ];
+    
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_SSL_VERIFYPEER => ($params['environment'] === 'production'),
+        CURLOPT_TIMEOUT => 60
+    ]);
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_error = curl_error($ch);
+    curl_close($ch);
+    
+    // Log if enabled
+    if ($params['enable_logging']) {
+        cosmo_log_request('Request to Pay', $url, $http_code, $response, $curl_error, $payload);
+    }
+    
+    // Handle response
+    if ($http_code == 202) {
+        // Store reference ID for later verification
+        cosmo_store_reference($invoice_id, $reference_id);
+        
+        // Redirect to order check page
+        $callback_url = U . "order/view/{$invoice_id}/check?ref={$reference_id}";
+        header("Location: {$callback_url}");
+        exit;
+        
+    } elseif ($http_code == 400) {
+        $error_data = json_decode($response, true);
+        $error_message = $error_data['message'] ?? 'Invalid payment request';
+        Message::sendTelegram("Cosmo: 400 Error - {$error_message}\nPayload: " . json_encode($payload));
+        r2(U . 'order/package', 'e', "Payment failed: {$error_message}");
+        
+    } elseif ($http_code == 403) {
+        Message::sendTelegram("Cosmo: Authentication failed - Check credentials");
+        r2(U . 'order/package', 'e', 'Payment gateway authentication failed. Please contact support.');
+        
+    } elseif ($http_code == 409) {
+        r2(U . 'order/package', 'e', 'Duplicate transaction. Please check if payment was already processed.');
+        
+    } else {
+        $error_msg = $curl_error ?: "HTTP {$http_code}";
+        Message::sendTelegram("Cosmo: Payment failed - {$error_msg}\nResponse: {$response}");
+        r2(U . 'order/package', 'e', 'Payment could not be processed. Please try again.');
+    }
+    
+    return false;
+}
+
+/**
+ * Store transaction reference
+ */
+function cosmo_store_reference($invoice_id, $reference_id) {
+    // Create transaction record if table exists
+    try {
+        $table_exists = ORM::for_table('tbl_cosmo_transactions')->raw_query("SHOW TABLES LIKE 'tbl_cosmo_transactions'")->find_one();
+        if ($table_exists) {
+            $transaction = ORM::for_table('tbl_cosmo_transactions')->create();
+            $transaction->invoice_id = $invoice_id;
+            $transaction->reference_id = $reference_id;
+            $transaction->status = 'pending';
+            $transaction->created_at = date('Y-m-d H:i:s');
+            $transaction->save();
+        }
+    } catch (Exception $e) {
+        // Table doesn't exist, just continue
+    }
+}
+
+/**
+ * Verify payment status (for callback)
+ */
+function cosmo_check_payment_status($reference_id) {
+    global $config;
+    
+    $params = [
+        'api_base_url' => $config['cosmo_api_url'] ?? 'https://sandbox.momodeveloper.mtn.com',
+        'subscription_key' => $config['cosmo_subscription_key'] ?? '',
+        'x_reference_id' => $config['cosmo_x_reference_id'] ?? '',
+        'api_secret' => $config['cosmo_api_secret'] ?? '',
+        'environment' => $config['cosmo_environment'] ?? 'sandbox',
+        'enable_logging' => $config['cosmo_enable_logging'] ?? '0'
+    ];
+    
+    $access_token = cosmo_get_access_token($params);
+    if (!$access_token) {
+        return false;
+    }
+    
+    $url = rtrim($params['api_base_url'], '/') . "/collection/v1_0/requesttopay/{$reference_id}";
+    
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $access_token,
+            'X-Target-Environment: ' . $params['environment'],
+            'Ocp-Apim-Subscription-Key: ' . $params['subscription_key'],
+            'Content-Type: application/json'
+        ],
+        CURLOPT_SSL_VERIFYPEER => ($params['environment'] === 'production')
+    ]);
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($http_code === 200) {
+        return json_decode($response, true);
+    }
+    
+    return false;
+}
+
+/**
+ * Test connection endpoint
+ */
+function cosmo_test_connection() {
+    global $config;
+    
+    $params = [
+        'api_base_url' => $_POST['api_url'] ?? $config['cosmo_api_url'] ?? '',
+        'subscription_key' => $_POST['subscription_key'] ?? $config['cosmo_subscription_key'] ?? '',
+        'x_reference_id' => $_POST['x_reference_id'] ?? $config['cosmo_x_reference_id'] ?? '',
+        'api_secret' => $_POST['api_secret'] ?? $config['cosmo_api_secret'] ?? '',
+        'environment' => 'sandbox',
+        'enable_logging' => '1'
+    ];
+    
+    $access_token = cosmo_get_access_token($params);
+    
+    if ($access_token) {
+        echo json_encode(['success' => true, 'message' => 'Connection successful!']);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Connection failed. Please check your credentials.']);
+    }
+    exit;
+}
+
+// Handle AJAX test connection
+if (isset($_POST['action']) && $_POST['action'] === 'test_connection') {
+    cosmo_test_connection();
+}
 ?>
