@@ -243,7 +243,7 @@ function cosmo_create_transaction($trx, $user) {
 }
 
 // ============================================
-// TEST CONNECTION HANDLER (ONLY ONE)
+// ENHANCED TEST CONNECTION HANDLER
 // ============================================
 if (isset($_POST['action']) && $_POST['action'] === 'test_connection') {
     header('Content-Type: application/json');
@@ -252,14 +252,56 @@ if (isset($_POST['action']) && $_POST['action'] === 'test_connection') {
     $subscription_key = $_POST['subscription_key'] ?? '';
     $x_reference_id = $_POST['x_reference_id'] ?? '';
     $api_secret = $_POST['api_secret'] ?? '';
+    $environment = $_POST['environment'] ?? 'sandbox';
     
     // Validate inputs
     if (empty($api_url) || empty($subscription_key) || empty($x_reference_id) || empty($api_secret)) {
-        echo json_encode(['success' => false, 'message' => 'Missing required credentials. Please fill all fields.']);
+        echo json_encode([
+            'success' => false, 
+            'status' => 'Disconnected',
+            'message' => 'Missing required credentials',
+            'tests' => []
+        ]);
         exit;
     }
     
-    // Test getting access token
+    $results = [
+        'status' => 'Disconnected',
+        'portal' => 'MTN MoMo',
+        'last_tested' => date('n/j/Y, g:i:s A'),
+        'success_rate' => '',
+        'failures' => 0,
+        'tests' => []
+    ];
+    
+    // TEST 1: API Endpoint Reachability
+    $start_time = microtime(true);
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => rtrim($api_url, '/') . '/collection/token/',
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_NOBODY => true,
+        CURLOPT_TIMEOUT => 10
+    ]);
+    curl_exec($ch);
+    $reachable = curl_getinfo($ch, CURLINFO_HTTP_CODE) !== 0;
+    $response_time = round((microtime(true) - $start_time) * 1000);
+    curl_close($ch);
+    
+    $results['tests']['endpoint'] = [
+        'name' => 'API Endpoint',
+        'status' => $reachable ? 'Pass' : 'Fail',
+        'message' => $reachable ? "Reachable ({$response_time}ms)" : 'Cannot reach API endpoint',
+        'response_time' => $response_time
+    ];
+    
+    if (!$reachable) {
+        $results['failures']++;
+        echo json_encode($results);
+        exit;
+    }
+    
+    // TEST 2: Subscription Key Validation
     $url = rtrim($api_url, '/') . '/collection/token/';
     $credentials = base64_encode($x_reference_id . ':' . $api_secret);
     
@@ -279,23 +321,72 @@ if (isset($_POST['action']) && $_POST['action'] === 'test_connection') {
         CURLOPT_TIMEOUT => 30
     ]);
     
+    $start_time = microtime(true);
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $response_time = round((microtime(true) - $start_time) * 1000);
     $curl_error = curl_error($ch);
     curl_close($ch);
     
-    if ($http_code === 200) {
-        $data = json_decode($response, true);
-        if (isset($data['access_token'])) {
-            echo json_encode(['success' => true, 'message' => 'Connection successful! Your credentials are valid.']);
-        } else {
-            echo json_encode(['success' => false, 'message' => 'Connected but no access token received. Response: ' . $response]);
-        }
-    } else {
-        $error_msg = $curl_error ?: "HTTP Error: {$http_code}";
-        echo json_encode(['success' => false, 'message' => "Connection failed: {$error_msg}"]);
+    // TEST 2: Subscription Key
+    $results['tests']['subscription'] = [
+        'name' => 'Subscription Key',
+        'status' => ($http_code !== 401 && $http_code !== 403) ? 'Pass' : 'Fail',
+        'message' => $http_code === 200 ? 'Valid' : ($http_code === 401 ? 'Invalid/Expired' : "HTTP {$http_code}"),
+        'response_time' => $response_time
+    ];
+    
+    if ($http_code === 401 || $http_code === 403) {
+        $results['failures']++;
+        $results['status'] = 'Disconnected';
+        echo json_encode($results);
+        exit;
     }
+    
+    // TEST 3: API User (X-Reference-Id) Validation
+    $results['tests']['api_user'] = [
+        'name' => 'API User (X-Reference-Id)',
+        'status' => ($http_code === 200) ? 'Pass' : 'Fail',
+        'message' => ($http_code === 200) ? 'Valid API User' : 'Invalid or unlinked API User',
+        'response_time' => $response_time
+    ];
+    
+    if ($http_code !== 200) {
+        $results['failures']++;
+        $results['status'] = 'Disconnected';
+        echo json_encode($results);
+        exit;
+    }
+    
+    // TEST 4: Access Token Generation (Final Test)
+    $token_data = json_decode($response, true);
+    $has_token = isset($token_data['access_token']);
+    
+    $results['tests']['token'] = [
+        'name' => 'Access Token',
+        'status' => $has_token ? 'Pass' : 'Fail',
+        'message' => $has_token ? 'Token generated successfully' : 'Failed to generate token',
+        'response_time' => $response_time
+    ];
+    
+    if ($has_token) {
+        $results['status'] = 'Connected';
+        $results['success_rate'] = '100%';
+        $results['failures'] = 0;
+        $results['token_expires_in'] = $token_data['expires_in'] ?? 3600;
+    } else {
+        $results['failures']++;
+        $results['status'] = 'Disconnected';
+    }
+    
+    // Try to get account info (optional - for extra info)
+    $results['tests']['account'] = [
+        'name' => 'Account Verification',
+        'status' => 'Info',
+        'message' => 'API User: ' . substr($x_reference_id, 0, 8) . '...',
+        'response_time' => 0
+    ];
+    
+    echo json_encode($results);
     exit;
 }
-
-?>
