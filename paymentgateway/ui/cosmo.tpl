@@ -81,11 +81,13 @@
                 <label class="col-md-2 control-label">Currency <span class="text-danger">*</span></label>
                 <div class="col-md-6">
                     <select class="form-control" name="cosmo_currency" required>
-                        <option value="XAF" {$cosmo_currency == 'XAF' ? 'selected' : ''}>XAF - Central African CFA Franc</option>
-                        <option value="XOF" {$cosmo_currency == 'XOF' ? 'selected' : ''}>XOF - West African CFA Franc</option>
-                        <option value="USD" {$cosmo_currency == 'USD' ? 'selected' : ''}>USD - US Dollar</option>
-                        <option value="EUR" {$cosmo_currency == 'EUR' ? 'selected' : ''}>EUR - Euro</option>
-                        <option value="NGN" {$cosmo_currency == 'NGN' ? 'selected' : ''}>NGN - Nigerian Naira</option>
+                        <option value="XAF" {if $cosmo_currency == 'XAF'}selected{/if}>XAF (Central African CFA Franc)</option>
+                        <option value="XOF" {if $cosmo_currency == 'XOF'}selected{/if}>XOF (West African CFA Franc)</option>
+                        <option value="USD" {if $cosmo_currency == 'USD'}selected{/if}>USD (US Dollar)</option>
+                        <option value="EUR" {if $cosmo_currency == 'EUR'}selected{/if}>EUR (Euro)</option>
+                        <option value="NGN" {if $cosmo_currency == 'NGN'}selected{/if}>NGN (Nigerian Naira)</option>
+                        <option value="GHS" {if $cosmo_currency == 'GHS'}selected{/if}>GHS (Ghanaian Cedi)</option>
+                        <option value="UGX" {if $cosmo_currency == 'UGX'}selected{/if}>UGX (Ugandan Shilling)</option>
                     </select>
                 </div>
                 <div class="col-md-4">
