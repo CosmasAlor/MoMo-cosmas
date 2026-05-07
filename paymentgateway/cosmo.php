@@ -4,8 +4,6 @@
  * MTN MoMo API Integration
  */
 
-// No direct access restriction - allow your system to include it
-
 /**
  * Display gateway configuration
  */
@@ -81,7 +79,7 @@ function cosmo_get_access_token($params) {
             'Content-Type: application/json',
             'Cache-Control: no-cache'
         ],
-        CURLOPT_SSL_VERIFYPEER => ($params['environment'] === 'production'),
+        CURLOPT_SSL_VERIFYPEER => false, // Set to true in production
         CURLOPT_TIMEOUT => 30
     ]);
     
@@ -90,7 +88,7 @@ function cosmo_get_access_token($params) {
     $curlError = curl_error($ch);
     curl_close($ch);
     
-    if ($params['enable_logging']) {
+    if (isset($params['enable_logging']) && $params['enable_logging']) {
         cosmo_log_request('Get Access Token', $url, $httpCode, $response, $curlError);
     }
     
@@ -208,7 +206,7 @@ function cosmo_create_transaction($trx, $user) {
         CURLOPT_HTTPHEADER => $headers,
         CURLOPT_POSTFIELDS => json_encode($payload),
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_SSL_VERIFYPEER => ($params['environment'] === 'production'),
+        CURLOPT_SSL_VERIFYPEER => false,
         CURLOPT_TIMEOUT => 60
     ]);
     
@@ -244,26 +242,60 @@ function cosmo_create_transaction($trx, $user) {
     return false;
 }
 
-// Handle test connection AJAX request
+// ============================================
+// TEST CONNECTION HANDLER (ONLY ONE)
+// ============================================
 if (isset($_POST['action']) && $_POST['action'] === 'test_connection') {
     header('Content-Type: application/json');
     
-    $params = [
-        'api_base_url' => $_POST['api_url'] ?? '',
-        'subscription_key' => $_POST['subscription_key'] ?? '',
-        'x_reference_id' => $_POST['x_reference_id'] ?? '',
-        'api_secret' => $_POST['api_secret'] ?? '',
-        'environment' => 'sandbox',
-        'enable_logging' => '1'
-    ];
+    $api_url = $_POST['api_url'] ?? '';
+    $subscription_key = $_POST['subscription_key'] ?? '';
+    $x_reference_id = $_POST['x_reference_id'] ?? '';
+    $api_secret = $_POST['api_secret'] ?? '';
     
-    $access_token = cosmo_get_access_token($params);
+    // Validate inputs
+    if (empty($api_url) || empty($subscription_key) || empty($x_reference_id) || empty($api_secret)) {
+        echo json_encode(['success' => false, 'message' => 'Missing required credentials. Please fill all fields.']);
+        exit;
+    }
     
-    if ($access_token) {
-        echo json_encode(['success' => true, 'message' => 'Connection successful!']);
+    // Test getting access token
+    $url = rtrim($api_url, '/') . '/collection/token/';
+    $credentials = base64_encode($x_reference_id . ':' . $api_secret);
+    
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => '{}',
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Basic ' . $credentials,
+            'Ocp-Apim-Subscription-Key: ' . $subscription_key,
+            'Content-Type: application/json',
+            'Cache-Control: no-cache'
+        ],
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_TIMEOUT => 30
+    ]);
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_error = curl_error($ch);
+    curl_close($ch);
+    
+    if ($http_code === 200) {
+        $data = json_decode($response, true);
+        if (isset($data['access_token'])) {
+            echo json_encode(['success' => true, 'message' => 'Connection successful! Your credentials are valid.']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Connected but no access token received. Response: ' . $response]);
+        }
     } else {
-        echo json_encode(['success' => false, 'message' => 'Connection failed. Please check your credentials.']);
+        $error_msg = $curl_error ?: "HTTP Error: {$http_code}";
+        echo json_encode(['success' => false, 'message' => "Connection failed: {$error_msg}"]);
     }
     exit;
 }
+
 ?>
